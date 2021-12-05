@@ -71,6 +71,8 @@ data LispVal = Atom String -- Stores string naming the Atom
              | Bool Bool -- Haskell bool
              | PrimitiveFunc ([LispVal] -> ThrowsError LispVal) -- Basic functions; +, eqn, -...
              | Func { params :: [String], vararg :: (Maybe String), body :: [LispVal], closure :: Env } -- User defined functions
+             | IOFunc ([LispVal] -> IOThrowsError LispVal) -- Function that can perform IO
+             | Port Handle -- Thing you can read from and write to
 
 data LispError = NumArgs Integer [LispVal]
                | TypeMismatch String LispVal
@@ -95,6 +97,8 @@ showLispVal (Func {params = args, vararg = varargs, body = body, closure = env})
       (case varargs of
          Nothing  -> ""
          Just arg -> " . " ++ arg) ++ ") ...)"
+showLispVal (IOFunc _) = "<IO Primative>"
+showLispVal (Port _) = "<IO Port>"
 
 unwordsList :: [LispVal] -> String
 unwordsList = unwords . map showLispVal
@@ -128,12 +132,13 @@ extractValue (Right val) = val
 symbol :: Parser Char
 symbol = oneOf "!#$%&|*+-/:<=>?@^_~"
 
--- Parsers input from user with the "parseExpr" function
-readExpr :: String -> ThrowsError LispVal
-readExpr input = case parse parseExpr "lisp" input of
+readOrThrow :: Parser a -> String -> ThrowsError a
+readOrThrow parser input = case parse parser "lisp" input of
     Left err  -> throwError $ Parser err
     Right val -> return val
 
+readExpr = readOrThrow parseExpr -- Specialised application of readOrThrow
+readExprList = readOrThrow (endBy parseExpr spaces) -- Specialised application of readOrThrow; used to load programs of scheme files
 spaces :: Parser()
 spaces = skipMany1 space
 
@@ -228,7 +233,9 @@ eval env (List (Atom "lambda" : DottedList params varargs : body)) =
      makeVarArgs varargs env params body
 eval env (List (Atom "lambda" : varargs@(Atom _) : body)) =
      makeVarArgs varargs env [] body
-eval env (List (function : args)) = do
+eval env (List [Atom "load", String filename]) =
+     load filename >>= liftM last . mapM (eval env)
+eval env (List (function : args)) = do -- Function evaluation
      func <- eval env function
      argVals <- mapM (eval env) args
      apply func argVals
@@ -253,6 +260,7 @@ apply (Func params varargs body closure) args = -- User defined
             bindVarArgs arg env = case arg of
                 Just argName -> liftIO $ bindVars env [(argName, List $ remainingArgs)]
                 Nothing -> return env
+apply (IOFunc func) args = func args
 
 primitives :: [(String, [LispVal] -> ThrowsError LispVal)]
 primitives = [("+", numericBinop (+)),
@@ -281,10 +289,58 @@ primitives = [("+", numericBinop (+)),
             ("eq?", eqv),
             ("eqv?", eqv)]
 
+ioPrimitives :: [(String, [LispVal] -> IOThrowsError LispVal)]
+ioPrimitives = [("apply", applyProc),
+                ("open-input-file", makePort ReadMode),
+                ("open-output-file", makePort WriteMode),
+                ("close-input-port", closePort),
+                ("close-output-port", closePort),
+                ("read", readProc),
+                ("write", writeProc),
+                ("read-contents", readContents),
+                ("read-all", readAll)]
+
 -- Primatives need binding to null env so they exist as PrimativeFuncs rather than reading in as a String and looking up in table above
 primitiveBindings :: IO Env
-primitiveBindings = nullEnv >>= (flip bindVars $ map makePrimitiveFunc primitives)
-     where makePrimitiveFunc (var, func) = (var, PrimitiveFunc func)
+primitiveBindings = nullEnv >>= (flip bindVars $ map (makeFunc IOFunc) ioPrimitives
+                                               ++ map (makeFunc PrimitiveFunc) primitives)
+     where makeFunc constructor (var, func) = (var, constructor func)
+
+-- Wrapper around apply, destructures the argument list into the form apply expects
+applyProc :: [LispVal] -> IOThrowsError LispVal
+applyProc [func, List args] = apply func args
+applyProc (func : args)     = apply func args
+
+-- Wraps openFile in Haskell; allows reading from and writing to
+makePort :: IOMode -> [LispVal] -> IOThrowsError LispVal
+makePort mode [String filename] = liftM Port $ liftIO $ openFile filename mode
+
+-- Wraps Haskell hClose
+closePort :: [LispVal] -> IOThrowsError LispVal
+closePort [Port port] = liftIO $ hClose port >> (return $ Bool True)
+closePort _           = return $ Bool False
+
+-- Reads line from file, accessed via the Port
+readProc :: [LispVal] -> IOThrowsError LispVal
+readProc []          = readProc [Port stdin]
+readProc [Port port] = (liftIO $ hGetLine port) >>= liftThrows . readExpr
+
+-- Converts LispVal to string and writes to Port
+writeProc :: [LispVal] -> IOThrowsError LispVal
+writeProc [obj]            = writeProc [obj, Port stdout]
+writeProc [obj, Port port] = liftIO $ hPrint port obj >> (return $ Bool True)
+
+-- Wrapper around readFile; reads whole file into string in memory
+readContents :: [LispVal] -> IOThrowsError LispVal
+readContents [String filename] = liftM String $ liftIO $ readFile filename
+
+-- Reads everything in file and evaluates each with readExprLst
+load :: String -> IOThrowsError [LispVal]
+load filename = (liftIO $ readFile filename) >>= liftThrows . readExprList
+
+-- Wraps the above in List constructor
+readAll :: [LispVal] -> IOThrowsError LispVal
+readAll [String filename] = liftM List $ load filename
 
 numericBinop :: (Integer -> Integer -> Integer) -> [LispVal] -> ThrowsError LispVal
 numericBinop op           []  = throwError $ NumArgs 2 []
@@ -395,15 +451,16 @@ until_ pred prompt action = do
       then return ()
       else action result >> until_ pred prompt action
 
-runOne :: String -> IO ()
-runOne expr = primitiveBindings >>= flip evalAndPrint expr
+-- runOne evaluates a file
+runOne :: [String] -> IO ()
+runOne args = do
+    env <- primitiveBindings >>= flip bindVars [("args", List $ map String $ drop 1 args)]
+    (runIOThrows $ liftM show $ eval env (List [Atom "load", String (args !! 0)]))
+        >>= hPutStrLn stderr
 
 runRepl :: IO ()
 runRepl = primitiveBindings >>= until_ (== "quit") (readPrompt "Lisp>>> ") . evalAndPrint
 
 main :: IO ()
 main = do args <- getArgs
-          case length args of
-               0         -> runRepl
-               1         -> runOne $ args !! 0
-               otherwise -> putStrLn "Program takes only 0 or 1 argument"
+          if null args then runRepl else runOne $ args
