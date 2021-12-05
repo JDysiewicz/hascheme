@@ -29,7 +29,7 @@ showLispVal (Bool False) = "#f"
 showLispVal (List contents) = "(" ++ unwordsList contents ++ ")"
 showLispVal (DottedList head tail) = "(" ++ unwordsList head ++ " . " ++ showLispVal tail ++ ")"
 showLispVal (PrimitiveFunc _) = "<primitive>"
-showLispVal (Func {params = args, vararg = varargs, body = body, closure = env}) =
+showLispVal Func {params = args, vararg = varargs, body = body, closure = env} =
    "(lambda (" ++ unwords (map show args) ++
       (case varargs of
          Nothing  -> ""
@@ -68,7 +68,6 @@ type IOThrowsError = ExceptT LispError IO
 liftThrows :: ThrowsError a -> IOThrowsError a
 liftThrows (Left err)  = throwError err
 liftThrows (Right val) = return val
-
 
 -- Need a way to run the IOThrowsError action
 runIOThrows :: IOThrowsError String -> IO String
