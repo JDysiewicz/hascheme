@@ -5,18 +5,26 @@ import           LispVal                       (LispError (Parser),
                                                 ThrowsError)
 import           Text.ParserCombinators.Parsec hiding (spaces)
 
+-- Parser helpers
 symbol :: Parser Char
 symbol = oneOf "!#$%&|*+-/:<=>?@^_~"
+spaces :: Parser()
+spaces = skipMany1 space
 
+-- Main parser
 readOrThrow :: Parser a -> String -> ThrowsError a
 readOrThrow parser input = case parse parser "lisp" input of
     Left err  -> throwError $ Parser err
     Right val -> return val
 
+readExpr :: String -> ThrowsError LispVal
 readExpr = readOrThrow parseExpr -- Specialised application of readOrThrow
-readExprList = readOrThrow (endBy parseExpr spaces) -- Specialised application of readOrThrow; used to load programs of scheme files
-spaces :: Parser()
-spaces = skipMany1 space
+
+readExprList :: String -> ThrowsError [LispVal]
+readExprList = readOrThrow (endBy parseExpr spaces) -- Specialised application of readOrThrow; used to load programs of scheme files; expects newline end
+
+
+-- Main Parsing functions
 
 parseString :: Parser LispVal
 parseString = do

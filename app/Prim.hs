@@ -31,9 +31,9 @@ primitives = [("+", numericBinop (+)),
             ("string>?", strBoolBinop (>)),
             ("string<=?", strBoolBinop (<=)),
             ("string>=?", strBoolBinop (>=)),
-            ("car", car),
-            ("cdr", cdr),
-            ("cons", cons),
+            ("car", car), -- Head of list
+            ("cdr", cdr), -- Tail of list
+            ("cons", cons), -- Concatenate two things
             ("eq?", eqv),
             ("eqv?", eqv)]
 

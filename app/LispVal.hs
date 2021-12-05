@@ -1,9 +1,11 @@
+{-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 module LispVal where
 import           Control.Monad.Except
 import           Data.IORef
 import           System.IO
 import           Text.Parsec
 
+-- Store environment as map of tuples of string "Atoms" to their value; IORef LispVal as LispVal might be another scope which has its own state
 type Env = IORef [(String, IORef LispVal)]
 
 data LispVal = Atom String -- Stores string naming the Atom
@@ -16,8 +18,6 @@ data LispVal = Atom String -- Stores string naming the Atom
             | Func { params :: [String], vararg :: (Maybe String), body :: [LispVal], closure :: Env } -- User defined functions
             | IOFunc ([LispVal] -> IOThrowsError LispVal) -- Function that can perform IO
             | Port Handle -- Thing you can read from and write to
-
-
 
 instance Show LispVal where show = showLispVal
 showLispVal :: LispVal -> String
@@ -37,10 +37,6 @@ showLispVal (Func {params = args, vararg = varargs, body = body, closure = env})
 showLispVal (IOFunc _) = "<IO Primative>"
 showLispVal (Port _) = "<IO Port>"
 
-unwordsList :: [LispVal] -> String
-unwordsList = unwords . map showLispVal
-
--- Store environment as map of tuples of string "Atoms" to their value; IORef LispVal as LispVal might be another scope which has its own state
 
 data LispError = NumArgs Integer [LispVal]
                | TypeMismatch String LispVal
@@ -49,7 +45,7 @@ data LispError = NumArgs Integer [LispVal]
                | NotFunction String String
                | UnboundVar String String
                | Default String
-
+instance Show LispError where show = showError
 showError :: LispError -> String
 showError (UnboundVar message varname)  = message ++ ": " ++ varname
 showError (BadSpecialForm message form) = message ++ ": " ++ show form
@@ -60,7 +56,7 @@ showError (TypeMismatch expected found) = "Invalid type: expected " ++ expected
                                        ++ ", found " ++ show found
 showError (Parser parseErr)             = "Parse error at " ++ show parseErr
 
-instance Show LispError where show = showError
+-- Error Handling
 
 -- Partially applied to create type constructor which takes a "happy path" argument
 -- e.g. ThrowsError String a == ThrowsError LispVal
@@ -72,11 +68,16 @@ type IOThrowsError = ExceptT LispError IO
 liftThrows :: ThrowsError a -> IOThrowsError a
 liftThrows (Left err)  = throwError err
 liftThrows (Right val) = return val
+
+
 -- Need a way to run the IOThrowsError action
 runIOThrows :: IOThrowsError String -> IO String
-runIOThrows action = runExceptT (trapError action) >>= return . extractValue
+runIOThrows action = runExceptT (trapError action) >>= return . (\(Right val) -> val)
+
 -- Return error as string representation within monad
+trapError :: (MonadError a m, Show a) => m String -> m String
 trapError action = catchError action (return . show)
 
-extractValue :: ThrowsError a -> a
-extractValue (Right val) = val
+-- Helpers --
+unwordsList :: [LispVal] -> String
+unwordsList = unwords . map showLispVal

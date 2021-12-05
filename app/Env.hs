@@ -5,8 +5,6 @@ import           LispVal              (Env, IOThrowsError,
                                        LispError (UnboundVar), LispVal,
                                        ThrowsError)
 
-
-
 -- Helper to create empty env in IO Monad
 nullEnv :: IO Env
 nullEnv = newIORef []
@@ -15,11 +13,14 @@ nullEnv = newIORef []
 isBound :: Env -> String -> IO Bool
 isBound envRef var = readIORef envRef >>= return . maybe False (const True) . lookup var
 
+-- Gets existing variable in env
 getVar :: Env -> String -> IOThrowsError LispVal
 getVar envRef var = do
     env <- liftIO $ readIORef envRef -- Need to lift the IO [(String, IORef LispVal)] env into IOThrowsError combined monad, so use liftIO
     maybe (throwError $ UnboundVar "Getting an unbound variable" var) (liftIO . readIORef) (lookup var env)
 
+
+-- Sets existing var in env
 setVar :: Env -> String -> LispVal -> IOThrowsError LispVal
 setVar envRef var value = do
     env <- liftIO $ readIORef envRef
@@ -46,5 +47,4 @@ bindVars envRef bindings = readIORef envRef >>= extendEnv bindings >>= newIORef
                 ref <- newIORef value
                 return (var, ref)
 
-extractValue :: ThrowsError a -> a
-extractValue (Right val) = val
+

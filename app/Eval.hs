@@ -42,8 +42,11 @@ eval env badForm = throwError $ BadSpecialForm "Unrecognized special form" badFo
 
 
 -- Helper functions to make creating functions easier
+makeFunc :: Monad m => Maybe String -> Env -> [LispVal] -> [LispVal] -> m LispVal
 makeFunc varargs env params body = return $ Func (map showLispVal params) varargs body env
+makeNormalFunc :: Env -> [LispVal] -> [LispVal] -> ExceptT LispError IO LispVal
 makeNormalFunc = makeFunc Nothing
+makeVarArgs :: LispVal -> Env -> [LispVal] -> [LispVal] -> ExceptT LispError IO LispVal
 makeVarArgs = makeFunc . Just . showLispVal
 
 -- Passed LispVal representing function; could be primative (from list below) or user-defined
